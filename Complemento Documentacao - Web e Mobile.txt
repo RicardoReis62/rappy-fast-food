@@ -137,11 +137,15 @@ Códigos de resposta HTTP usados:
 
 Exemplo - login:
   POST /api/auth/login
-  { "email": "cliente@rappy.com", "senha": "Cliente@123" }
+  { "email": "<e-mail cadastrado>", "senha": "<senha definida no cadastro>" }
 
-  Resposta 200:
-  { "token": "eyJhbGciOiJIUzI1NiIs...", "idUsuario": <número>, "nome": "Joao Silva",
-    "email": "cliente@rappy.com", "tipoUsuario": "cliente" }
+  Para testar o login, primeiro crie uma conta pela tela /cadastro (cliente ou empresa)
+  e utilize o e-mail e a senha definidos durante o cadastro. Não utilize credenciais
+  compartilhadas nem publique senhas neste documento.
+
+  Resposta 200 (exemplo ilustrativo; os dados correspondem à conta cadastrada):
+  { "token": "<token JWT>", "idUsuario": <número>, "nome": "<nome cadastrado>",
+    "email": "<e-mail cadastrado>", "tipoUsuario": "cliente" }
 
 Exemplo - criar pedido (com o cabeçalho Authorization: Bearer <token>):
   POST /api/pedidos
@@ -188,14 +192,17 @@ Detalhes:
   voltam como 400 com mensagem amigável; erros inesperados voltam como 500 "Erro interno.",
   sem revelar detalhes técnicos.
 - CORS habilitado para que o app, que roda em outra origem (porta), consiga chamar a API.
-- Limitações por ser ambiente acadêmico: o sistema roda em HTTP, e a senha do banco e a chave
-  JWT ficam no docker-compose.yml. Em produção seria necessário HTTPS, segredos guardados em
-  cofre (variáveis protegidas ou Azure Key Vault, por exemplo) e CORS restrito.
+- Limitações por ser ambiente acadêmico: o sistema roda em HTTP. A senha do banco, a chave
+  JWT e as credenciais administrativas são fornecidas localmente pelo arquivo .env e injetadas
+  nos contêineres pelo Docker Compose. Em produção seria necessário HTTPS, segredos guardados
+  em cofre (variáveis protegidas ou Azure Key Vault, por exemplo) e CORS restrito.
 
 3.5 Estrutura administrativa
 ----------------------------
-O perfil administrador (usuário admin@rappy.com, criado automaticamente na primeira
-execução) tem duas páginas exclusivas:
+O perfil administrador é configurado localmente pelas variáveis DEMO_ADMIN_EMAIL e
+DEMO_ADMIN_PASSWORD do arquivo .env. Quando ambas estão preenchidas, o DbSeeder cria ou
+atualiza essa conta ao iniciar a API. Não há e-mail ou senha administrativa padrão no código.
+O administrador tem duas páginas exclusivas:
 
 - /admin - Dashboard:
   * 5 cartões de indicadores: pedidos hoje, faturamento hoje, clientes ativos, ticket médio e
@@ -612,8 +619,12 @@ do grupo.
   (ferramenta sqlcmd).
 - São idempotentes (IF NOT EXISTS e CREATE OR ALTER): podem ser executados de novo sem erro e
   sem duplicar dados.
-- Os usuários iniciais NÃO estão no script: são criados pela API ao iniciar (classe DbSeeder),
-  porque a senha precisa ser criptografada com BCrypt pela aplicação.
+- Não há usuários de demonstração com senhas fixas nos scripts SQL ou no código.
+- O DbSeeder desativa as antigas contas públicas admin@rappy.com, cliente@rappy.com e
+  empresa@rappy.com, preservando seus registros e relacionamentos. A conta administrativa
+  pode ser criada/atualizada com DEMO_ADMIN_EMAIL e DEMO_ADMIN_PASSWORD no .env.
+- Clientes e empresas são cadastrados pela interface /cadastro; a API armazena as senhas
+  usando BCrypt.
 - Sugestão: colocar os três scripts completos como Apêndice. A Etapa 7 pede o "script do
   banco de dados completo que será utilizado pelas APIs, aplicação Web e Mobile".
 
@@ -770,18 +781,38 @@ Serviços do docker-compose.yml:
 Os Dockerfiles são multi-stage: um estágio compila com o SDK completo e a imagem final leva
 só o necessário para rodar, o que a deixa menor e mais segura.
 
+Configuração local:
+  1. Copie .env.example para .env e defina MSSQL_SA_PASSWORD e JWT_SECRET com valores próprios.
+  2. Para criar o administrador de demonstração, preencha DEMO_ADMIN_EMAIL e
+     DEMO_ADMIN_PASSWORD no .env. A senha deve ter pelo menos 6 caracteres.
+  3. Execute docker compose up -d --build. Para conferir: docker compose ps -a.
+  4. O estado esperado é db=healthy, db-init=Exited (0), api/web/mobile=Up.
+  5. Para reconstruir a API depois de alterar a configuração administrativa:
+     docker compose up -d --build api.
+
 Comandos:
-  Subir tudo ........ docker compose up --build
-  Parar ............. docker compose down
-  Parar e apagar os dados do banco ... docker compose down -v
+  Subir tudo ........ docker compose up -d --build
+  Parar contêineres . docker compose stop
+  Iniciar novamente  docker compose up -d
+  Remover contêineres docker compose down (mantém o volume dbdata)
+  Apagar também o banco ... docker compose down -v (remove os dados persistidos)
 
 Conexão com o banco (SSMS ou VS Code com a extensão SQL Server):
-  Servidor: localhost,1433   Usuário: sa   Senha: definida localmente no arquivo .env (não versionado)
+  Servidor: localhost,1433   Usuário: sa   Senha: definida localmente em MSSQL_SA_PASSWORD no .env.
+  Observação: em volumes existentes, alterar o .env não altera automaticamente a senha sa
+  já armazenada no SQL Server. Alinhe o .env à senha atual ou altere o login sa no próprio
+  SQL Server. Não remova dbdata se precisar preservar os dados.
 
-Usuários de teste:
-  Administrador ... admin@rappy.com     senha Admin@123
-  Cliente (B2C) ... cliente@rappy.com   senha Cliente@123
-  Empresa (B2B) ... empresa@rappy.com   senha Empresa@123
+Contas para demonstração:
+  - Administrador: configurado localmente por DEMO_ADMIN_EMAIL e DEMO_ADMIN_PASSWORD no .env.
+    O DbSeeder cria ou atualiza essa conta na inicialização da API; não há senha padrão no código.
+    Se as variáveis estiverem vazias, não é criada uma conta administrativa automaticamente.
+  - Cliente (B2C): crie pela página /cadastro, selecionando Cliente, e utilize os dados definidos.
+  - Empresa (B2B): crie pela página /cadastro, selecionando Empresa, e utilize os dados definidos.
+  - As contas legadas admin@rappy.com, cliente@rappy.com e empresa@rappy.com são desativadas
+    pelo DbSeeder para impedir o uso das senhas de demonstração anteriormente expostas. Os
+    registros e relacionamentos existentes são preservados; não são apagados.
+  - Nunca publique o arquivo .env nem compartilhe as credenciais administrativas.
 
 Roteiro de demonstração (serve para a apresentação e para tirar os prints):
   1. Abrir o app (localhost:8082), navegar pelo cardápio, adicionar itens, entrar com o

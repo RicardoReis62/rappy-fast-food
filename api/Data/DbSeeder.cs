@@ -5,42 +5,59 @@ namespace RappyFastFood.API.Data;
 
 public static class DbSeeder
 {
-    public static async Task PopularAsync(AppDbContext db)
+    public static async Task PopularAsync(AppDbContext db, IConfiguration configuracao)
     {
-        if (!await db.Usuarios.AnyAsync(u => u.Email == "admin@rappy.com"))
+        // Desativa contas de demonstração antigas que utilizavam senhas públicas no código.
+        // Os registros e relacionamentos são preservados; apenas o acesso dessas contas é bloqueado.
+        var emailsLegados = new[]
         {
-            var admin = new Usuario { Email = "admin@rappy.com", Nome = "Administrador", TipoUsuario = "admin" };
-            admin.DefinirSenha("Admin@123");
-            db.Usuarios.Add(admin);
+            "admin@rappy.com",
+            "cliente@rappy.com",
+            "empresa@rappy.com"
+        };
+
+        var contasLegadas = await db.Usuarios
+            .Where(u => emailsLegados.Contains(u.Email))
+            .ToListAsync();
+
+        foreach (var conta in contasLegadas)
+        {
+            conta.Ativo = false;
         }
 
-        if (!await db.Usuarios.AnyAsync(u => u.Email == "cliente@rappy.com"))
-        {
-            var usuario = new Usuario { Email = "cliente@rappy.com", Nome = "Joao Silva", TipoUsuario = "cliente" };
-            usuario.DefinirSenha("Cliente@123");
-            db.ClientesB2C.Add(new ClienteB2C
-            {
-                Usuario = usuario,
-                CPF = "123.456.789-09",
-                Endereco = "Rua das Flores, 100",
-                Cidade = "Goiania",
-                Estado = "GO"
-            });
-        }
+        // A conta administrativa é opcional e só é criada/atualizada quando
+        // credenciais locais forem fornecidas no arquivo .env.
+        var emailAdmin = configuracao["DEMO_ADMIN_EMAIL"]?.Trim();
+        var senhaAdmin = configuracao["DEMO_ADMIN_PASSWORD"];
 
-        if (!await db.Usuarios.AnyAsync(u => u.Email == "empresa@rappy.com"))
+        if (!string.IsNullOrWhiteSpace(emailAdmin) || !string.IsNullOrWhiteSpace(senhaAdmin))
         {
-            var usuario = new Usuario { Email = "empresa@rappy.com", Nome = "Maria Oliveira", TipoUsuario = "empresa" };
-            usuario.DefinirSenha("Empresa@123");
-            db.EmpresasB2B.Add(new EmpresaB2B
+            if (string.IsNullOrWhiteSpace(emailAdmin) || !emailAdmin.Contains('@'))
+                throw new InvalidOperationException("Configure um DEMO_ADMIN_EMAIL válido no arquivo .env.");
+
+            if (string.IsNullOrWhiteSpace(senhaAdmin) || senhaAdmin.Length < 6)
+                throw new InvalidOperationException("DEMO_ADMIN_PASSWORD deve ter pelo menos 6 caracteres.");
+
+            var admin = await db.Usuarios.SingleOrDefaultAsync(u => u.Email == emailAdmin);
+            if (admin == null)
             {
-                Usuario = usuario,
-                RazaoSocial = "Tech Solucoes LTDA",
-                NomeFantasia = "Tech Solucoes",
-                CNPJ = "12.345.678/0001-90",
-                QuantidadeFuncionarios = 80,
-                EnderecoEntrega = "Av. Goias, 500"
-            });
+                admin = new Usuario
+                {
+                    Email = emailAdmin,
+                    Nome = "Administrador",
+                    TipoUsuario = "admin"
+                };
+                db.Usuarios.Add(admin);
+            }
+            else
+            {
+                admin.Email = emailAdmin;
+                admin.Nome = "Administrador";
+                admin.TipoUsuario = "admin";
+            }
+
+            admin.Ativo = true;
+            admin.DefinirSenha(senhaAdmin);
         }
 
         await db.SaveChangesAsync();

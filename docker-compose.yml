@@ -37,6 +37,8 @@ services:
       ConnectionStrings__Padrao: "Server=db;Database=RappyFastFoodDB;User Id=sa;Password=${MSSQL_SA_PASSWORD:?Configure MSSQL_SA_PASSWORD no arquivo .env};TrustServerCertificate=True"
       Jwt__Chave: "${JWT_SECRET:?Configure JWT_SECRET no arquivo .env}"
       ASPNETCORE_URLS: "http://0.0.0.0:8080"
+      DEMO_ADMIN_EMAIL: "${DEMO_ADMIN_EMAIL:-}"
+      DEMO_ADMIN_PASSWORD: "${DEMO_ADMIN_PASSWORD:-}"
     ports:
       - "0.0.0.0:8080:8080"
 

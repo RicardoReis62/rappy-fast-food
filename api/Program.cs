@@ -56,7 +56,9 @@ app.MapControllers();
 
 using (var escopo = app.Services.CreateScope())
 {
-    await DbSeeder.PopularAsync(escopo.ServiceProvider.GetRequiredService<AppDbContext>());
+    await DbSeeder.PopularAsync(
+        escopo.ServiceProvider.GetRequiredService<AppDbContext>(),
+        app.Configuration);
 }
 
 app.Run();

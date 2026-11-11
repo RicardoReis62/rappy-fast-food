@@ -1,123 +1,138 @@
 RAPPY FAST FOOD - COMO EXECUTAR NO WINDOWS
 
-Tudo roda dentro do Docker. Não é preciso instalar .NET, Flutter nem SQL Server.
+Este guia corresponde à configuração atual do repositório. Os serviços são executados pelo Docker; não é necessário instalar .NET, Flutter ou SQL Server diretamente no Windows.
 
 REQUISITOS
-  - Windows 10 (22H2) ou Windows 11, 64 bits
-  - 8 GB de RAM e pelo menos 20 GB livres no disco
-  - Virtualização habilitada (Gerenciador de Tarefas > Desempenho > CPU > "Virtualização: Habilitado")
-  - Internet: a primeira execução baixa alguns GB de imagens
+  - Windows 10 (22H2) ou Windows 11, 64 bits.
+  - Docker Desktop instalado e com o indicador "Engine running".
+  - Virtualização habilitada e WSL 2 configurado (Docker Desktop pode orientar a instalação).
+  - Internet na primeira execução para baixar imagens e dependências.
 
+1. PREPARAR O PROJETO
 
-1. INSTALAR O DOCKER (só na primeira vez)
+  a) Baixe ou clone o repositório.
+  b) Extraia o ZIP para uma pasta sem acentos, por exemplo C:\Projetos\rappy-fast-food.
+  c) Abra essa pasta. O arquivo docker-compose.yml deve estar diretamente nela.
+  d) Abra o Prompt de Comando nessa pasta: clique na barra de endereço do Explorador,
+     digite cmd e pressione Enter.
 
-Abra o PowerShell como Administrador (menu Iniciar > digite "PowerShell" > botão direito >
-"Executar como administrador") e rode:
+2. CONFIGURAR O AMBIENTE
 
-    wsl --install --no-distribution
-    winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
-    Restart-Computer
+  No Prompt de Comando, crie o arquivo local .env:
 
-Depois que o PC reiniciar:
-  - Abra o "Docker Desktop" pelo menu Iniciar
-  - Aceite os termos (não precisa criar conta, pode pular o login)
-  - Espere aparecer "Engine running" no canto inferior esquerdo
+      copy .env.example .env
 
-Para conferir, abra um PowerShell normal e rode:
+  Abra o .env no Bloco de Notas e defina:
+    MSSQL_SA_PASSWORD  senha forte para o administrador do SQL Server (sa).
+    JWT_SECRET         chave aleatória longa para assinatura dos tokens da API.
 
-    docker version
+  Para criar um administrador de demonstração, preencha também:
+    DEMO_ADMIN_EMAIL      e-mail administrativo que você escolheu.
+    DEMO_ADMIN_PASSWORD  senha própria com pelo menos 6 caracteres.
 
+  Se DEMO_ADMIN_EMAIL e DEMO_ADMIN_PASSWORD ficarem vazios, o sistema não cria
+  administrador automaticamente. Cliente e empresa podem ser cadastrados pela página
+  /cadastro. Nunca publique o arquivo .env no GitHub.
 
-2. EXTRAIR O PROJETO
+3. INICIAR OS SERVIÇOS
 
-Salve o arquivo rappy-fast-food.zip na pasta Downloads e rode no PowerShell:
+  Confirme que o Docker Desktop mostra "Engine running" e execute:
 
-    Expand-Archive -Path "$env:USERPROFILE\Downloads\rappy-fast-food.zip" -DestinationPath "C:\" -Force
+      docker --version
+      docker compose version
+      docker compose up -d --build
 
-O projeto fica em C:\rappy-fast-food (o arquivo docker-compose.yml deve estar direto nessa pasta).
-Evite extrair na Área de Trabalho ou em Documentos (OneDrive) e em caminhos com espaços ou acentos.
+  A primeira execução pode demorar, pois as imagens e dependências serão baixadas e os
+  projetos serão compilados. Para acompanhar:
 
+      docker compose ps -a
+      docker compose logs -f db
 
-3. SUBIR O SISTEMA
+  Estado esperado após a inicialização:
+    db       Up (healthy)
+    db-init  Exited (0)  [normal: executa os scripts SQL e encerra]
+    api      Up
+    web      Up
+    mobile   Up
 
-    cd C:\rappy-fast-food
-    docker compose up -d --build
+4. ACESSAR O SISTEMA
 
-A primeira vez demora de 10 a 30 minutos. Nas próximas sobe em segundos.
+  Site (Web) ........ http://localhost:8081
+  Aplicativo Web .... http://localhost:8082
+  API (produtos) .... http://localhost:8080/api/produtos
+  SQL Server ........ localhost,1433 (usuário sa; senha do .env)
 
-Para conferir:
+  Contas de demonstração:
+    Administrador: use o DEMO_ADMIN_EMAIL e DEMO_ADMIN_PASSWORD definidos no .env.
+    Cliente: na página /cadastro, selecione Cliente e crie uma conta.
+    Empresa: na página /cadastro, selecione Empresa e crie uma conta.
 
-    docker compose ps -a
+  Não existem senhas padrão publicadas neste projeto. A senha do administrador é lida
+  localmente pelo DbSeeder a partir das variáveis do .env. As antigas contas de demonstração
+  com e-mails admin@rappy.com, cliente@rappy.com e empresa@rappy.com são desativadas; seus
+  registros relacionados são preservados.
 
-Esperado: db "healthy", db-init "Exited (0)" e api, web e mobile "Up".
+5. ACESSAR PELO CELULAR (OPCIONAL)
 
+  O celular e o PC precisam estar no mesmo Wi-Fi.
+  a) Execute ipconfig e anote o Endereço IPv4 do adaptador Wi-Fi.
+  b) Se necessário, libere as portas 8080, 8081 e 8082 no Firewall do Windows (PowerShell
+     como Administrador):
 
-4. ACESSAR
+      New-NetFirewallRule -DisplayName "Rappy Fast Food" -Direction Inbound -Protocol TCP -LocalPort 8080,8081,8082 -Action Allow
 
-    Site (Web) ........ http://localhost:8081
-    App (Mobile) ...... http://localhost:8082
-    API ............... http://localhost:8080/api/produtos
+  c) No navegador do celular, use http://IP_DO_PC:8082 (aplicativo) ou
+     http://IP_DO_PC:8081 (site). A disponibilidade depende da configuração de rede e firewall.
 
-Usuários de teste:
+6. PARAR, INICIAR E PRESERVAR O BANCO
 
-    admin@rappy.com      Admin@123      (painel administrativo no site)
-    cliente@rappy.com    Cliente@123
-    empresa@rappy.com    Empresa@123    (10% de desconto no carrinho)
+  Parar contêineres mantendo os dados:
+      docker compose stop
 
+  Iniciar novamente:
+      docker compose up -d
 
-5. ABRIR NO CELULAR (opcional)
+  Remover contêineres e rede mantendo o volume:
+      docker compose down
 
-O celular e o PC precisam estar no mesmo Wi-Fi.
+  ATENÇÃO: NÃO execute docker compose down -v se precisar preservar o banco. Esse comando
+  remove o volume dbdata e pode apagar os dados armazenados no SQL Server.
 
-  a) Descubra o IP do PC (linha "Endereço IPv4" do adaptador Wi-Fi, ex.: 192.168.0.15):
+  Para reconstruir após alterações no código:
+      docker compose up -d --build
 
-         ipconfig
+  Para aplicar alterações somente na API (por exemplo, configuração do administrador):
+      docker compose up -d --build api
 
-  b) Libere as portas no firewall (PowerShell como Administrador, só na primeira vez):
+7. PROBLEMAS COMUNS
 
-         New-NetFirewallRule -DisplayName "Rappy Fast Food" -Direction Inbound -Protocol TCP -LocalPort 8080,8081,8082 -Action Allow
+  - "docker" não é reconhecido:
+      Feche e abra o terminal novamente. Confirme que o Docker Desktop está instalado.
 
-  c) No navegador do celular acesse http://IP_DO_PC:8082 (app) ou http://IP_DO_PC:8081 (site)
+  - "error during connect" ou "cannot find the file specified":
+      Abra o Docker Desktop e aguarde "Engine running". Depois teste docker info.
 
+  - SQL Server fica unhealthy ou os logs mostram erro 18456 para o usuário sa:
+      A senha do volume existente pode ser diferente da senha atualmente escrita no .env.
+      O SQL Server não troca a senha do sa só porque o .env mudou. Se souber a senha atual,
+      conecte-se ao container e altere o login com sqlcmd, por exemplo:
 
-6. LIGAR E DESLIGAR
+      docker compose exec db /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "SENHA_ATUAL" -Q "ALTER LOGIN sa WITH PASSWORD = 'NOVA_SENHA'"
 
-O Docker Desktop precisa estar aberto antes de qualquer comando.
+      Depois atualize MSSQL_SA_PASSWORD no .env para a mesma NOVA_SENHA e execute
+      docker compose up -d. Não remova o volume para corrigir isso se precisar dos dados.
 
-    cd C:\rappy-fast-food
-    docker compose stop         desliga e mantém os dados
-    docker compose up -d        liga de novo
-    docker compose down -v      apaga tudo, inclusive o banco (o próximo "up" recria do zero)
+  - "port is already allocated":
+      Outro serviço está usando a porta indicada (1433, 8080, 8081 ou 8082). Identifique-o
+      antes de parar qualquer serviço; não apague o volume do banco.
 
-Se alterar algum código, rode "docker compose up -d --build" para aplicar.
+  - Site/app abre, mas não carrega dados:
+      Confira docker compose ps -a e consulte docker compose logs api.
 
+  - Falha na inicialização dos scripts SQL:
+      Consulte docker compose logs db-init e confirme que o SQL Server está healthy.
 
-PROBLEMAS COMUNS
-
-  - "docker" não é reconhecido como comando
-      Feche e abra o PowerShell de novo depois da instalação.
-
-  - "error during connect" ou "cannot find the file specified"
-      O Docker Desktop não está aberto. Abra e espere "Engine running".
-
-  - "port is already allocated" na porta 1433
-      Já existe um SQL Server instalado no PC. Pare o serviço (PowerShell como Administrador)
-      e rode o "docker compose up -d" de novo:
-
-          Get-Service *MSSQL* | Stop-Service -Force
-
-  - "port is already allocated" na porta 8080, 8081 ou 8082
-      Outro programa está usando a porta. Feche o programa e rode o "docker compose up -d" de novo.
-
-  - "You are not allowed to use Docker, you must be in the docker-users group"
-      Rode no PowerShell como Administrador, depois saia e entre de novo no Windows:
-
-          net localgroup docker-users "$env:USERNAME" /add
-
-  - Erro de virtualização ou de WSL ao abrir o Docker Desktop
-      Habilite a virtualização na BIOS (Intel VT-x ou AMD SVM) e reinicie.
-
-  - Site ou app abre mas não carrega os dados
-      A API pode ainda estar subindo. Veja o que está acontecendo com:
-
-          docker compose logs api
+  - Credenciais administrativas não funcionam:
+      Confira DEMO_ADMIN_EMAIL e DEMO_ADMIN_PASSWORD no .env e recrie a API com
+      docker compose up -d --build api. O inicializador sincroniza a conta administrativa
+      configurada no ambiente ao iniciar a API.
