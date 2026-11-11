@@ -1,0 +1,856 @@
+RAPPY FAST FOOD - COMPLEMENTO PARA A DOCUMENTAÇÃO DO PIM IV
+Desenvolvimento Web, Mobile, Arquitetura de Software e Banco de Dados
+
+Arquivo de apoio para finalizar o documento "Final - PIM Rappy Fast Food.docx".
+Não é um capítulo pronto: reúne como o sistema foi construído e os conceitos de cada
+disciplina que aparecem no código, para o grupo adaptar e encaixar no texto final.
+
+Correspondência com o Manual do PIM IV:
+  Etapa 4 - Desenvolvimento da solução Web (Desenvolvimento Web com .NET) ........... seção 3
+  Etapa 5 - Desenvolvimento da solução Mobile (Desenvolvimento Mobile) .............. seção 4
+  Etapa 6 - Arquitetura de Software (Programação Aplicada em .NET) .................. seção 5
+  Etapa 7 - Projeto do Banco de Dados (Programação de Banco de Dados) ............... seção 6
+
+
+==========================================================================================
+2. VISÃO GERAL DA SOLUÇÃO
+==========================================================================================
+
+A solução tem quatro partes independentes que se comunicam:
+
+     App Mobile (Flutter)              Site Web (Blazor / .NET 8)
+              \                               /
+               \     HTTP + JSON + JWT       /
+                v                           v
+            API REST (ASP.NET Core 8 Web API, C#)
+                            |
+                            |  Entity Framework Core 8 + stored procedures
+                            v
+                Banco de dados SQL Server 2022
+
+Regra principal da arquitetura: o site e o app NUNCA acessam o banco diretamente. Tudo passa
+pela API. Assim os dois usam as mesmas regras de negócio, os mesmos dados e a mesma
+segurança.
+
+Tecnologias e versões:
+  Back-end ...... C#, ASP.NET Core 8 Web API, Entity Framework Core 8
+                  (Microsoft.EntityFrameworkCore.SqlServer 8.0.11),
+                  Microsoft.AspNetCore.Authentication.JwtBearer 8.0.11, BCrypt.Net-Next 4.0.3
+  Web ........... C#, Blazor (ASP.NET Core 8, modo Interactive Server), HTML5, CSS3
+  Mobile ........ Flutter (canal stable), Dart 3.5+, pacote http 1.2.2, Material Design 3
+  Banco ......... SQL Server 2022, T-SQL
+  Ambiente ...... Docker e Docker Compose (nada instalado diretamente na máquina)
+
+Estrutura de pastas do projeto:
+  rappy-fast-food/
+  ├── api/                 API REST (Controllers, Services, Repositories, Models, Dtos, Data)
+  ├── web/                 site em Blazor (Components/Pages, Components/Layout, Services,
+  │                        Models, wwwroot)
+  ├── mobile/              aplicativo Flutter (lib/, lib/telas/, android/, web/)
+  ├── db/                  scripts SQL (01-schema, 02-programacao, 03-dados)
+  └── docker-compose.yml   sobe banco, API, site e app juntos
+
+
+==========================================================================================
+3. ETAPA 4 - DESENVOLVIMENTO DA SOLUÇÃO WEB (Desenvolvimento Web com .NET)
+==========================================================================================
+
+3.1 Arquitetura da aplicação web
+----------------------------------
+A parte web é formada por dois projetos .NET 8:
+
+- RappyFastFood.API (pasta api/): API REST que concentra as regras de negócio, a
+  autenticação e o acesso ao banco. Atende tanto o site quanto o app.
+- RappyFastFood.Web (pasta web/): o site, feito em Blazor. Não acessa o banco; consome a API
+  por HTTP.
+
+Blazor é o framework da Microsoft para construir interfaces web com C# usando componentes
+Razor (arquivos .razor, que misturam HTML e C#). No modo Interactive Server, usado no
+projeto, os componentes rodam no servidor e o navegador mantém uma conexão em tempo real
+(SignalR, sobre WebSocket): os cliques são enviados ao servidor, que devolve só as partes da
+tela que mudaram. A vantagem é usar a mesma linguagem (C#) no front-end e no back-end, sem
+escrever JavaScript, reaproveitando os conceitos de orientação a objetos da disciplina.
+
+Arquivos principais do site:
+- Program.cs: registra os componentes Razor no modo interativo, o serviço Sessao e o
+  HttpClient tipado ApiClient (endereço da API lido da configuração "ApiUrl"). Também define
+  a cultura pt-BR, o que formata moeda (R$) e datas (dd/MM/aaaa) no padrão brasileiro.
+- Services/ApiClient.cs: concentra todas as chamadas HTTP à API, inclui o token no cabeçalho
+  Authorization e transforma erros da API ({"erro": "..."}) em mensagens exibidas na tela.
+- Services/Sessao.cs: guarda o usuário logado, o token e o carrinho durante a navegação, e
+  dispara o evento Alterou para atualizar o menu (por exemplo, o contador do carrinho).
+- Models/Dtos.cs: classes com o mesmo formato do JSON devolvido pela API.
+- Components/Layout/MainLayout.razor: cabeçalho, menu e rodapé comuns a todas as páginas;
+  o menu muda conforme o perfil do usuário.
+- Components/Pages/*.razor: uma página para cada rota (seção 3.7).
+- wwwroot/app.css: folha de estilo única do site.
+
+Conceitos de Blazor usados (bons para citar na disciplina):
+- @page: define a rota da página (ex.: @page "/cardapio").
+- @inject: injeção de dependência dentro do componente (ApiClient, Sessao, NavigationManager).
+- @bind: ligação de dados bidirecional (two-way data binding) entre campos e variáveis.
+- @onclick: tratamento de eventos.
+- OnInitializedAsync: método do ciclo de vida que carrega os dados quando a página abre.
+- [SupplyParameterFromQuery]: lê parâmetros da URL (ex.: /cardapio?categoria=2 e
+  /login?retorno=/carrinho).
+- NavigationManager: redirecionamento entre páginas.
+- NavLink: link de menu que fica destacado quando a página está ativa.
+
+3.2 APIs REST
+-------------
+REST (FIELDING, 2000) é um estilo de arquitetura em que os recursos são identificados por
+URLs e manipulados por verbos HTTP (GET consulta, POST cria, PUT altera, DELETE remove). O
+servidor não guarda estado entre requisições (cada requisição leva o seu token) e os dados
+trafegam em JSON.
+
+Endpoints da API:
+
+  Método  Rota                           Acesso           Função
+  ------  -----------------------------  ---------------  ------------------------------------
+  POST    /api/auth/login                público          Login; devolve token JWT e dados
+  POST    /api/auth/cadastro/cliente     público          Cadastra cliente B2C e devolve token
+  POST    /api/auth/cadastro/empresa     público          Cadastra empresa B2B e devolve token
+  GET     /api/categorias                público          Lista as categorias ativas
+  GET     /api/produtos?categoriaId=     público          Lista produtos disponíveis
+                                                          (sp_ProdutosPorCategoria)
+  GET     /api/produtos/{id}             público          Detalhe de um produto
+  POST    /api/produtos                  admin            Cadastra produto
+  PUT     /api/produtos/{id}             admin            Altera produto
+  DELETE  /api/produtos/{id}             admin            Remove produto (ou desativa, se já
+                                                          tiver sido vendido)
+  POST    /api/pedidos                   cliente/empresa  Cria pedido
+  GET     /api/pedidos/meus              cliente/empresa  Pedidos do usuário logado
+  GET     /api/pedidos                   admin            Últimos 100 pedidos
+  GET     /api/pedidos/{id}              autenticado      Detalhe de um pedido
+  PUT     /api/pedidos/{id}/status       admin            Avança ou cancela o pedido
+                                                          (sp_AtualizarStatusPedido)
+  GET     /api/dashboard/resumo          admin            Indicadores (sp_ResumoDashboard)
+  GET     /api/dashboard/vendas          admin            Vendas por dia; padrão: últimos 7
+                                                          dias (sp_RelatorioVendas)
+  GET     /api/dashboard/alertas         admin            Alertas de estoque gerados por trigger
+
+Códigos de resposta HTTP usados:
+  200 OK, 201 Created (produto criado), 204 No Content (produto removido),
+  400 Bad Request (regra de negócio violada, com {"erro": "mensagem"}),
+  401 Unauthorized (sem token ou login inválido), 403 Forbidden (perfil sem permissão),
+  404 Not Found, 500 Internal Server Error (sem expor detalhes técnicos).
+
+Exemplo - login:
+  POST /api/auth/login
+  { "email": "cliente@rappy.com", "senha": "Cliente@123" }
+
+  Resposta 200:
+  { "token": "eyJhbGciOiJIUzI1NiIs...", "idUsuario": <número>, "nome": "Joao Silva",
+    "email": "cliente@rappy.com", "tipoUsuario": "cliente" }
+
+Exemplo - criar pedido (com o cabeçalho Authorization: Bearer <token>):
+  POST /api/pedidos
+  { "enderecoEntrega": "Rua das Flores, 100", "formaPagamento": "PIX", "observacoes": null,
+    "itens": [ { "idProduto": 1, "quantidade": 2 }, { "idProduto": 9, "quantidade": 1 } ] }
+
+3.3 Autenticação
+----------------
+A autenticação usa JWT (JSON Web Token, RFC 7519). Fluxo:
+  1. O usuário informa e-mail e senha, enviados para /api/auth/login.
+  2. A API busca o usuário pelo e-mail (normalizado em minúsculas), confere a senha com
+     BCrypt e verifica se o usuário está ativo.
+  3. A API gera um token assinado com HMAC-SHA256 e uma chave secreta da configuração. O
+     token carrega o id do usuário, o nome e o perfil (role) e vale por 8 horas.
+  4. O site e o app guardam o token em memória e o enviam em todas as requisições no
+     cabeçalho "Authorization: Bearer <token>".
+  5. O middleware JwtBearer da API valida a assinatura e a validade do token. Os atributos
+     [Authorize] e [Authorize(Roles = "admin")] liberam ou bloqueiam cada endpoint.
+
+Detalhes:
+- O cadastro já devolve o token, então o usuário entra logado logo após se cadastrar.
+- Existe um único login para os três perfis: o perfil vem do banco (coluna TipoUsuario). Por
+  isso a tela de login não precisa de abas. O administrador é redirecionado para o Dashboard;
+  os demais vão para o Cardápio ou voltam para a página onde estavam (parâmetro ?retorno=).
+- Como o servidor não guarda sessão (stateless), a API pode ser escalada com mais instâncias
+  sem compartilhar memória entre elas.
+
+3.4 Segurança
+-------------
+- Senhas criptografadas com BCrypt (hash com salt). A senha nunca é gravada em texto puro.
+- Autorização por perfil na API: clientes e empresas criam pedidos; só o administrador
+  gerencia produtos, altera status e acessa o dashboard. O site também esconde menus e
+  páginas de administração, mas a proteção que vale de verdade está na API.
+- Validações no servidor: nome e e-mail obrigatórios, senha com no mínimo 6 caracteres,
+  e-mail e CNPJ sem duplicidade, preço maior que zero, pedido com itens e quantidades
+  válidas, forma de pagamento permitida e produto disponível.
+- O preço é calculado no servidor: o cliente envia só o id do produto e a quantidade, e a
+  API busca o preço no banco. Isso impede que alguém altere o valor pelo navegador ou app.
+- Proteção contra SQL Injection: o Entity Framework gera consultas parametrizadas, e as
+  procedures são chamadas com ExecuteSqlInterpolatedAsync e SqlQuery, que convertem os
+  valores em parâmetros.
+- DTOs: a API nunca devolve a entidade Usuario, então o SenhaHash nunca sai do servidor.
+- Tratamento global de erros (middleware UseExceptionHandler): erros de regra de negócio
+  voltam como 400 com mensagem amigável; erros inesperados voltam como 500 "Erro interno.",
+  sem revelar detalhes técnicos.
+- CORS habilitado para que o app, que roda em outra origem (porta), consiga chamar a API.
+- Limitações por ser ambiente acadêmico: o sistema roda em HTTP, e a senha do banco e a chave
+  JWT ficam no docker-compose.yml. Em produção seria necessário HTTPS, segredos guardados em
+  cofre (variáveis protegidas ou Azure Key Vault, por exemplo) e CORS restrito.
+
+3.5 Estrutura administrativa
+----------------------------
+O perfil administrador (usuário admin@rappy.com, criado automaticamente na primeira
+execução) tem duas páginas exclusivas:
+
+- /admin - Dashboard:
+  * 5 cartões de indicadores: pedidos hoje, faturamento hoje, clientes ativos, ticket médio e
+    ingredientes em alerta;
+  * tabela de vendas dos últimos 7 dias (pedidos, faturamento e ticket médio por dia);
+  * lista de alertas de estoque;
+  * tabela de pedidos com status colorido e os botões "Avançar para <próximo status>" e
+    "Cancelar".
+
+- /admin/produtos - Gerenciar produtos:
+  * formulário de cadastro e edição (nome, descrição, preço, categoria, calorias, disponível);
+  * tabela com os produtos e os botões Editar e Remover;
+  * produto que já aparece em algum pedido não é apagado: fica indisponível (exclusão lógica),
+    para preservar o histórico de vendas.
+
+Fluxo de status do pedido:
+  Recebido -> Preparando -> Pronto -> Saiu para entrega -> Entregue
+  (Cancelado é possível em qualquer etapa antes de Entregue)
+A regra é garantida no banco pela procedure sp_AtualizarStatusPedido, que não deixa pular
+etapas nem alterar pedidos já finalizados.
+
+3.6 Integração entre módulos
+----------------------------
+- Site e app usam a mesma API e o mesmo banco: um pedido feito no app aparece na hora no
+  dashboard do site, e o status alterado pelo administrador no site aparece no app.
+- Site -> API: o servidor Blazor chama a API pela rede interna do Docker (http://api:8080).
+- App -> API: o app roda no dispositivo (ou no navegador) e chama a API diretamente
+  (http://localhost:8080 por padrão, configurável).
+- API -> Banco: Entity Framework Core para o CRUD e stored procedures para relatórios e
+  regras; as triggers atualizam o estoque automaticamente.
+
+Exemplo de integração completa (criação de um pedido):
+  1. O cliente finaliza o carrinho no site ou no app -> POST /api/pedidos.
+  2. A API valida os dados, calcula subtotal, taxa de entrega (R$ 5,00) e desconto (10% para
+     empresa) e grava o pedido e os itens.
+  3. A trigger trg_ItensPedido_BaixaEstoque dá baixa nos ingredientes conforme a ficha técnica
+     de cada produto.
+  4. Se algum ingrediente chegar ao estoque mínimo, a trigger trg_Ingredientes_Alerta grava um
+     alerta.
+  5. O administrador vê o pedido e o alerta no dashboard e avança o status.
+  6. O cliente acompanha o status em "Meus pedidos" (site) ou na aba Pedidos (app).
+
+3.7 Telas do site
+-----------------
+  Rota              Tela / função
+  ----------------  -------------------------------------------------------------------------
+  /                 Home: banner, categorias (o clique abre o cardápio já filtrado), 3 produtos
+                    em destaque e chamada para empresas.
+  /cardapio         Cardápio: botões de filtro por categoria e cartões com nome, descrição,
+                    categoria, calorias, preço e botão "Adicionar".
+  /carrinho         Carrinho: tabela com botões +/-, subtotal, taxa de entrega, desconto de
+                    empresa (10%) e total; campos de endereço, forma de pagamento (PIX, cartão
+                    de crédito, cartão de débito, dinheiro) e observações; botão "Finalizar
+                    pedido". Sem login, leva ao login e depois volta ao carrinho.
+  /login            Login: e-mail, senha com botão mostrar/ocultar e link para cadastro.
+  /cadastro         Cadastro com abas Cliente e Empresa.
+                    Cliente: nome, e-mail, senha, telefone, CPF, endereço, cidade e UF.
+                    Empresa: responsável, e-mail, senha, telefone, razão social, nome
+                    fantasia, CNPJ, quantidade de funcionários e endereço de entrega.
+  /pedidos          Meus pedidos: cartões com número, data, forma de pagamento, itens, total e
+                    status colorido.
+  /admin            Dashboard administrativo (seção 3.5).
+  /admin/produtos   Gerenciar produtos (seção 3.5).
+
+Menu por perfil:
+  Visitante ........ Home, Cardápio, Carrinho, Entrar, Cadastrar
+  Cliente/Empresa .. Home, Cardápio, Carrinho, Meus Pedidos, "Olá, <nome>", Sair
+  Administrador .... Home, Cardápio, Carrinho, Dashboard, Produtos, "Olá, <nome>", Sair
+
+3.8 Responsividade e acessibilidade aplicadas
+---------------------------------------------
+Responsividade:
+- Meta tag viewport, para o navegador do celular não "encolher" a página.
+- Grade de cartões com CSS Grid: grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)).
+  O número de colunas se ajusta sozinho à largura da tela (1 coluna no celular, 2 a 4 no
+  computador), sem precisar de uma media query para cada faixa.
+- Menu com Flexbox e flex-wrap: os itens quebram de linha em telas pequenas.
+- Conteúdo centralizado com largura máxima de 1100px.
+- Media query para telas de até 767px: tabelas ganham rolagem horizontal e os espaçamentos
+  diminuem.
+- Formulários com largura máxima de 480px e campos ocupando 100% dessa largura.
+
+Acessibilidade:
+- Idioma da página declarado (lang="pt-BR"), usado pelos leitores de tela.
+- Todos os campos com <label for="..."> ligado ao id do campo.
+- Mensagens de erro com role="alert": o leitor de tela anuncia o erro automaticamente.
+- Foco visível (contorno azul de 3px) em links, botões e campos, para quem navega por teclado.
+- Fonte base de 16px.
+- Contraste: texto azul-escuro (#2c3e50) sobre branco fica em torno de 11:1, e o texto branco
+  nos botões vermelhos (#d63c3c) em torno de 4,6:1, ambos acima do mínimo de 4,5:1 da
+  WCAG 2.1 nível AA.
+- O status do pedido aparece em texto, além da cor (não depende só da cor para informar).
+
+Identidade visual: azul-escuro #2c3e50 (cabeçalho e cor secundária), vermelho #d63c3c (ações
+principais) e botões arredondados (border-radius 25px). As mesmas cores são usadas no app.
+
+3.9 Regras de negócio implementadas na API
+------------------------------------------
+- Taxa de entrega fixa de R$ 5,00.
+- Empresas (B2B) têm 10% de desconto sobre o subtotal.
+- Se o pedido vier sem endereço, a API usa o endereço do cadastro do cliente ou da empresa.
+- ItensPedido guarda o preço do produto no momento da compra; mudanças de preço depois não
+  alteram pedidos antigos.
+- Administrador não faz pedidos.
+- Só produtos disponíveis aparecem no cardápio e podem ser pedidos.
+
+
+==========================================================================================
+4. ETAPA 5 - DESENVOLVIMENTO DA SOLUÇÃO MOBILE (Desenvolvimento Mobile)
+==========================================================================================
+
+4.1 Tecnologia escolhida
+------------------------
+O aplicativo foi desenvolvido em Flutter (framework do Google) com a linguagem Dart.
+Motivos da escolha:
+- Multiplataforma: o mesmo código gera Android, iOS e versão web. O projeto já tem a pasta
+  android/ configurada (identificador br.com.rappy.rappy_mobile), e a versão web é usada para
+  demonstração.
+- A interface é montada com widgets e já traz o Material Design 3.
+- Compilação nativa (AOT), com bom desempenho, e hot reload durante o desenvolvimento.
+- Projeto enxuto: só o pacote http (requisições REST) e o flutter_lints (padrões de código).
+  O estado da aplicação é gerenciado com recursos do próprio Flutter (ChangeNotifier), sem
+  bibliotecas externas.
+
+4.2 Estrutura do projeto
+------------------------
+  mobile/lib/
+  ├── main.dart        ponto de entrada: tema (mesmas cores do site) e navegação por abas
+  ├── api.dart         classe Api: todas as chamadas à API REST
+  ├── modelos.dart     classes Categoria, Produto, ItemCarrinho, ItemPedido, Pedido e Usuario,
+  │                    e a função moeda() (formata R$ 0,00)
+  ├── sessao.dart      classe Sessao: usuário logado, token e carrinho (estado global)
+  └── telas/
+      ├── cardapio.dart
+      ├── carrinho.dart
+      ├── pedidos.dart
+      └── conta.dart
+
+A separação segue a mesma ideia de camadas da API: modelos (dados), api (comunicação),
+sessao (estado) e telas (apresentação).
+
+4.3 Telas principais
+--------------------
+a) Cardápio
+   - Barra horizontal de filtros (ChoiceChip): "Todos" e uma opção para cada categoria vinda
+     da API.
+   - Lista de cartões com nome, descrição e preço de cada produto.
+   - Botão de carrinho em cada produto, que adiciona o item e mostra um aviso na parte de
+     baixo da tela (SnackBar "<produto> adicionado").
+   - Puxar a lista para baixo recarrega os dados (RefreshIndicator).
+   - Indicador de carregamento e mensagem de erro se a API não responder.
+
+b) Carrinho
+   - Itens com botões de diminuir e aumentar a quantidade (chegando a zero, o item sai).
+   - Subtotal, taxa de entrega (R$ 5,00) e total.
+   - Campo de endereço de entrega (se ficar vazio, a API usa o endereço do cadastro).
+   - Seleção da forma de pagamento: PIX, cartão de crédito, cartão de débito ou dinheiro.
+   - Botão "Finalizar pedido": sem login, leva para a aba Conta; com sucesso, limpa o
+     carrinho e abre a aba Pedidos. O botão fica desabilitado durante o envio, o que evita
+     pedido duplicado.
+
+c) Pedidos (Meus pedidos)
+   - Lista os pedidos do usuário, do mais recente para o mais antigo: número, status (ex.:
+     "Saiu para entrega"), itens (ex.: "2x Bowl de Quinoa Low Carb") e valor total.
+   - Atualiza sozinha a cada 15 segundos e também ao puxar a lista.
+
+d) Conta
+   - Sem login: formulário "Entrar" (e-mail e senha com botão mostrar/ocultar) e o botão
+     "Criar conta", que troca para o cadastro (nome, e-mail, senha, telefone e endereço).
+   - Logado: nome, e-mail, perfil e botão "Sair".
+
+4.4 Fluxo de navegação
+----------------------
+O app usa uma barra de navegação inferior (NavigationBar, Material 3) com 4 abas sempre
+visíveis:
+
+      [ Cardápio ]   [ Carrinho ]   [ Pedidos ]   [ Conta ]
+
+- A aba Carrinho mostra um selo (Badge) com a quantidade de itens, atualizado na hora.
+- O IndexedStack mantém o estado de cada aba ao trocar de aba (o filtro escolhido e o texto
+  digitado não se perdem).
+- Fluxo típico (persona João, cliente B2C):
+    Cardápio -> escolhe categoria -> adiciona produtos -> Carrinho -> Finalizar pedido
+      -> (se não estiver logado) Conta -> Entrar ou Criar conta -> Carrinho -> Finalizar
+      -> Pedidos (acompanha o status)
+- O cliente pode navegar e montar o carrinho sem ter conta; o login só é exigido na hora de
+  finalizar. Isso reduz o atrito para quem está conhecendo o app (decisão de UX).
+
+4.5 Autenticação no app
+-----------------------
+- Usa a mesma API e o mesmo JWT do site: Api.login() chama POST /api/auth/login e
+  Api.cadastrar() chama POST /api/auth/cadastro/cliente (o usuário já entra logado).
+- A resposta vira um objeto Usuario (token, nome, e-mail e perfil), guardado na Sessao.
+- Toda requisição passa pelo método Api._cabecalhos(), que inclui
+  "Authorization: Bearer <token>" quando o usuário está logado.
+- "Sair" apaga o usuário e o carrinho da memória.
+- O cadastro pelo app é para clientes (B2C), o público principal do mobile. Empresas se
+  cadastram pelo site, mas podem entrar no app com o mesmo login; o desconto de 10% é
+  aplicado pela API e aparece no valor do pedido na aba Pedidos.
+- O app não tem área administrativa; o administrador usa o site.
+
+4.6 Sincronização de dados
+--------------------------
+- Fonte única de dados: o banco SQL Server, acessado pela API. O app não tem banco local,
+  então não existe conflito entre cópias: o que aparece no app é o que está no servidor.
+- Leitura: o cardápio é carregado ao abrir o app, ao trocar de filtro e ao puxar a lista.
+  Alterações feitas pelo administrador no site (novo produto, mudança de preço, produto
+  indisponível) aparecem na próxima atualização.
+- Escrita: o pedido é enviado à API ao tocar em "Finalizar pedido"; até lá o carrinho fica
+  em memória no aparelho.
+- Acompanhamento do pedido: a tela Pedidos consulta a API a cada 15 segundos (polling com
+  Timer.periodic) e também quando o usuário entra ou sai da conta (listener na Sessao).
+  Assim, quando o administrador muda o status no site, o app mostra o novo status sem o
+  cliente fazer nada. O timer é cancelado no dispose() da tela para não gastar recursos.
+- Estado reativo: a Sessao é um ChangeNotifier. Quando algo muda (login, item adicionado), o
+  notifyListeners() avisa as telas, que se redesenham pelo ListenableBuilder (padrão
+  Observer).
+- Limitações: o app precisa de conexão (funciona só online) e a sessão não fica salva ao
+  fechar o app. Melhorias possíveis: guardar o token com shared_preferences ou
+  flutter_secure_storage, cache offline com sqflite e notificações push (Firebase Cloud
+  Messaging) no lugar do polling.
+
+4.7 Integração com APIs
+-----------------------
+Endpoints usados pelo app:
+  GET  /api/categorias                filtros do cardápio
+  GET  /api/produtos?categoriaId=     lista de produtos
+  POST /api/auth/login                login
+  POST /api/auth/cadastro/cliente     cadastro
+  POST /api/pedidos                   finalizar pedido
+  GET  /api/pedidos/meus              meus pedidos
+
+Como funciona:
+- O pacote http faz as requisições de forma assíncrona (Future + async/await), então a tela
+  não trava enquanto espera a resposta.
+- JSON: jsonEncode no envio; na resposta, o corpo é decodificado em UTF-8 (para manter os
+  acentos) e convertido em objetos pelos construtores factory fromJson das classes de
+  modelos.dart.
+- Erros: quando o status HTTP não está entre 200 e 299, o app lê o campo "erro" devolvido pela
+  API e mostra a mensagem na tela (ex.: e-mail ou senha inválidos, e-mail já cadastrado).
+- O endereço da API não fica fixo no código: é definido na compilação com
+  --dart-define=API_URL=... (padrão http://localhost:8080). Dá para apontar para outro
+  servidor sem alterar o código.
+- A API tem CORS habilitado para que a versão web do app (porta 8082) consiga chamá-la
+  (porta 8080).
+
+4.8 Interface e usabilidade do app
+----------------------------------
+- Material Design 3 (useMaterial3), com esquema de cores gerado a partir do vermelho #D63C3C
+  e barra superior em #2C3E50: mesma identidade visual do site.
+- Componentes nativos usados: Card, ListTile, ChoiceChip, NavigationBar, Badge, SnackBar,
+  FilledButton, OutlinedButton, TextField, DropdownButtonFormField,
+  CircularProgressIndicator e RefreshIndicator.
+- Botões de ícone com tooltip ("Adicionar ao carrinho", "Aumentar", "Diminuir", "Mostrar
+  senha"). O tooltip também é lido pelos leitores de tela (TalkBack no Android, VoiceOver
+  no iOS).
+- Teclado próprio para e-mail no campo de e-mail (TextInputType.emailAddress).
+- Feedback sempre visível: carregando, erro, carrinho vazio e lista sem pedidos.
+
+4.9 Execução do app
+-------------------
+- Pelo Docker: o serviço "mobile" compila a versão web do app (imagem
+  ghcr.io/cirruslabs/flutter:stable) e publica com Nginx em http://localhost:8082. Dá para
+  demonstrar no navegador; para simular um celular, use o modo dispositivo do DevTools (F12).
+- Em emulador Android (com Flutter SDK instalado):
+  flutter run --dart-define=API_URL=http://10.0.2.2:8080
+  (no emulador Android, 10.0.2.2 é o endereço do computador onde a API está rodando).
+
+4.10 Limitações do app (para a parte de avaliação/melhorias)
+------------------------------------------------------------
+- Não há testes automatizados (a pasta test/ está vazia).
+- No carrinho do app, o total não mostra o desconto de empresa; o desconto é aplicado pela
+  API e aparece no valor final do pedido.
+- Sem fotos dos produtos, sem cadastro de empresa e sem área administrativa no app.
+- Sessão não persistente, funcionamento só online e polling em vez de notificação push.
+
+
+==========================================================================================
+5. ETAPA 6 - ARQUITETURA DE SOFTWARE (Programação Aplicada em .NET)
+==========================================================================================
+
+5.1 Organização em camadas da API
+---------------------------------
+  Requisição HTTP
+        |
+        v
+  Controllers  ......  recebem a requisição, verificam a permissão ([Authorize]), chamam o
+        |              service e devolvem a resposta HTTP.
+        |              AuthController, ProdutosController, PedidosController,
+        |              DashboardController
+        v
+  Services  .........  regras de negócio e validações.
+        |              AuthService, TokenService, ProdutoService, PedidoService
+        v
+  Repositories  .....  acesso a dados: consultas com Entity Framework e chamadas às
+        |              procedures.
+        |              UsuarioRepository, ProdutoRepository, PedidoRepository
+        v
+  Data  .............  AppDbContext (mapeamento objeto-relacional) e DbSeeder (usuários
+        |              iniciais).
+        v
+  SQL Server
+
+Pastas usadas por todas as camadas:
+- Models: entidades (EntidadeBase, Usuario, ClienteB2C, EmpresaB2B, Categoria, Produto,
+  Ingrediente, Pedido, ItemPedido, AlertaEstoque).
+- Dtos: objetos de entrada e saída da API (LoginRequest, CadastroClienteRequest,
+  CadastroEmpresaRequest, CriarPedidoRequest, PedidoResposta, ProdutoLista, ResumoDashboard
+  etc.). Separam o "contrato" da API das entidades do banco.
+
+Benefícios: cada camada tem uma responsabilidade só (princípio da responsabilidade única), o
+que facilita manutenção e testes e permite trocar uma parte sem afetar as outras (ex.: mudar
+uma consulta no repository sem mexer no controller).
+
+Caminho de uma requisição (criar pedido):
+  PedidosController.Criar
+    -> PedidoService.CriarAsync (valida, calcula subtotal, taxa e desconto)
+    -> UsuarioRepository e ProdutoRepository (buscam o cliente/empresa e os preços)
+    -> PedidoRepository.AdicionarAsync
+    -> AppDbContext.SaveChangesAsync
+    -> INSERT no SQL Server (as triggers são executadas)
+
+5.2 Orientação a objetos aplicada
+---------------------------------
+a) Abstração e herança: EntidadeBase é uma classe abstrata com a propriedade Id, e todas as
+   entidades herdam dela. Por ser abstrata, ela não pode ser instanciada sozinha.
+
+     public abstract class EntidadeBase
+     {
+         public int Id { get; set; }
+     }
+
+     public class Produto : EntidadeBase { ... }
+
+b) Encapsulamento (classe Usuario):
+   - O e-mail fica no campo privado _email. Ao atribuir a propriedade Email, o valor é
+     limpo (Trim) e convertido para minúsculas, então o dado fica sempre normalizado.
+   - SenhaHash tem "set" privado: só pode ser alterado pelo método DefinirSenha(), que gera o
+     hash BCrypt. A verificação é feita por SenhaConfere(). Nenhuma outra classe consegue
+     gravar uma senha sem criptografia.
+
+     public string SenhaHash { get; private set; } = "";
+
+     public void DefinirSenha(string senha)
+     {
+         SenhaHash = BCrypt.Net.BCrypt.HashPassword(senha);
+     }
+
+     public bool SenhaConfere(string senha)
+     {
+         return BCrypt.Net.BCrypt.Verify(senha, SenhaHash);
+     }
+
+c) Composição e associação: ClienteB2C e EmpresaB2B possuem um Usuario (dados de acesso
+   comuns) e cada uma acrescenta os seus dados específicos (CPF e endereço; razão social e
+   CNPJ). Pedido possui uma lista de ItemPedido. Isso reflete os relacionamentos 1:1 e 1:N
+   do banco.
+
+d) Polimorfismo por sobrescrita (override): AppDbContext herda de DbContext e sobrescreve
+   OnModelCreating e ConfigureConventions para definir o mapeamento (tabelas,
+   relacionamentos, precisão decimal 18,2 e triggers). Do mesmo jeito, as páginas Blazor
+   sobrescrevem OnInitializedAsync e as telas Flutter sobrescrevem build, initState e
+   dispose. O framework chama o método da classe base e quem executa é a versão específica
+   de cada classe.
+
+e) Injeção de dependência: as classes recebem suas dependências pelo construtor (ex.:
+   PedidoService recebe PedidoRepository, ProdutoRepository e UsuarioRepository). Elas são
+   registradas no Program.cs com AddScoped (uma instância por requisição). Isso reduz o
+   acoplamento entre as classes.
+
+f) Padrões de projeto usados:
+   - Repository: isola o acesso a dados.
+   - DTO (Data Transfer Object): define os dados que entram e saem da API.
+   - Singleton: Sessao.instancia no app (uma única sessão para o app inteiro).
+   - Observer: ChangeNotifier no app e o evento Alterou no site, que avisam a interface
+     quando o estado muda.
+   - Middleware (pipeline): tratamento de erros, autenticação e autorização na API.
+
+5.3 Modularização
+-----------------
+- Três aplicações independentes (api, web e mobile) mais os scripts do banco, cada uma com a
+  sua pasta e o seu Dockerfile. Elas se comunicam apenas por HTTP/JSON, então dá para
+  alterar ou publicar uma sem mexer nas outras. Site e app são dois clientes do mesmo
+  back-end.
+- Na API, os módulos são separados por assunto: autenticação (Auth*), produtos e categorias
+  (Produto*), pedidos (Pedido*) e dashboard (Dashboard*), cada um com controller, service,
+  repository e DTOs próprios.
+- As configurações (string de conexão, chave JWT, endereço da API) ficam no appsettings.json
+  ou em variáveis de ambiente, fora do código.
+
+5.4 Arquitetura dos clientes (web e mobile)
+-------------------------------------------
+- Web (Blazor):     Components (Pages e Layout: apresentação) -> Services (ApiClient:
+                    comunicação; Sessao: estado) -> Models (DTOs)
+- Mobile (Flutter): telas (apresentação) -> api.dart (comunicação) -> sessao.dart (estado)
+                    -> modelos.dart (dados)
+A mesma divisão nos dois clientes deixa o sistema fácil de entender para qualquer integrante
+do grupo.
+
+
+==========================================================================================
+6. ETAPA 7 - PROJETO DO BANCO DE DADOS (Programação de Banco de Dados)
+==========================================================================================
+
+6.1 Scripts
+-----------
+  db/01-schema.sql ........ cria o banco RappyFastFoodDB, as 13 tabelas, chaves, CHECKs e
+                            índices
+  db/02-programacao.sql ... 4 stored procedures e 3 triggers
+  db/03-dados.sql ......... carga inicial: 5 categorias, 13 ingredientes, 10 produtos e a
+                            ficha técnica (ProdutoIngredientes)
+
+- Os scripts rodam automaticamente, nessa ordem, pelo serviço db-init do Docker Compose
+  (ferramenta sqlcmd).
+- São idempotentes (IF NOT EXISTS e CREATE OR ALTER): podem ser executados de novo sem erro e
+  sem duplicar dados.
+- Os usuários iniciais NÃO estão no script: são criados pela API ao iniciar (classe DbSeeder),
+  porque a senha precisa ser criptografada com BCrypt pela aplicação.
+- Sugestão: colocar os três scripts completos como Apêndice. A Etapa 7 pede o "script do
+  banco de dados completo que será utilizado pelas APIs, aplicação Web e Mobile".
+
+6.2 Modelo físico
+-----------------
+SGBD: SQL Server 2022.
+Tipos de dados usados:
+- INT IDENTITY(1,1) nas chaves primárias (numeração automática);
+- NVARCHAR nos textos (Unicode, aceita acentos);
+- DECIMAL(18,2) em valores monetários e quantidades (sem erro de arredondamento);
+- DATETIME com DEFAULT GETDATE() nas datas;
+- BIT nos campos sim/não (Ativo, Disponivel).
+
+Tabelas:
+  Usuarios ............... dados de acesso de todos os perfis (e-mail único, SenhaHash,
+                           TipoUsuario: cliente, empresa, admin ou entregador)
+  ClientesB2C ............ dados de pessoa física (1:1 com Usuarios)
+  EmpresasB2B ............ dados da empresa (1:1 com Usuarios; CNPJ único quando informado)
+  RestaurantesParceiros .. parceiros do CRM (estrutura pronta, sem telas)
+  Categorias ............. categorias do cardápio; público B2C, B2B ou Ambos
+  Produtos ............... itens do cardápio
+  Ingredientes ........... estoque (quantidade atual e quantidade mínima)
+  ProdutoIngredientes .... ficha técnica: quanto de cada ingrediente cada produto usa
+                           (N:N, chave primária composta)
+  Pedidos ................ cabeçalho do pedido (cliente ou empresa, status, pagamento,
+                           taxa, desconto e total)
+  ItensPedido ............ itens do pedido, com o preço do momento da compra
+  Avaliacoes ............. notas de 1 a 5 por pedido (estrutura pronta)
+  Favoritos .............. produtos favoritos do usuário (estrutura pronta; par
+                           usuário/produto único)
+  AlertasEstoque ......... alertas de estoque baixo gerados por trigger (tabela nova em
+                           relação ao documento)
+
+Restrições de integridade:
+- CHECK: TipoUsuario, TipoPublico, TipoCliente (B2C/B2B), Status (Recebido, Preparando,
+  Pronto, SaiuParaEntrega, Entregue, Cancelado), FormaPagamento (PIX, CartaoCredito,
+  CartaoDebito, Dinheiro), Quantidade > 0 e Nota entre 1 e 5.
+- CK_Pedidos_Cliente: garante que um pedido B2C tenha só IdClienteB2C preenchido e que um
+  pedido B2B tenha só IdEmpresaB2B preenchido.
+- Chaves estrangeiras com ON DELETE CASCADE onde o dado dependente não faz sentido sozinho
+  (ex.: itens de um pedido) e ON DELETE SET NULL em Produtos.IdRestaurante.
+
+Índices (aceleram as consultas mais usadas: cardápio por categoria, pedidos recentes e
+pedidos de um cliente):
+- e-mail (UNIQUE) e tipo de usuário;
+- CNPJ de empresas e parceiros com índice único filtrado (WHERE CNPJ IS NOT NULL), que
+  permite várias empresas sem CNPJ e impede CNPJ repetido;
+- produtos por categoria, disponibilidade e restaurante;
+- pedidos por status, data (decrescente), cliente e empresa;
+- itens por pedido e ingredientes por restaurante.
+
+6.3 MER - relacionamentos (atualizar o diagrama do documento)
+-------------------------------------------------------------
+  Usuarios              1 --- 1   ClientesB2C
+  Usuarios              1 --- 1   EmpresasB2B
+  Usuarios              1 --- 1   RestaurantesParceiros
+  Usuarios              1 --- N   Favoritos     N --- 1   Produtos
+  Categorias            1 --- N   Produtos
+  RestaurantesParceiros 1 --- N   Produtos
+  RestaurantesParceiros 1 --- N   Ingredientes
+  Produtos              N --- N   Ingredientes  (por meio de ProdutoIngredientes)
+  ClientesB2C           1 --- N   Pedidos
+  EmpresasB2B           1 --- N   Pedidos
+  Pedidos               1 --- N   ItensPedido   N --- 1   Produtos
+  Pedidos               1 --- N   Avaliacoes
+  Ingredientes          1 --- N   AlertasEstoque
+
+Observação: o pedido se liga ao ClienteB2C OU à EmpresaB2B; a coluna TipoCliente indica qual.
+
+6.4 Stored procedures
+---------------------
+1) sp_ProdutosPorCategoria (@IdCategoria, opcional)
+   Retorna os produtos disponíveis com o nome da categoria (LEFT JOIN), filtrando pela
+   categoria quando ela é informada, em ordem de nome.
+   Usada em: GET /api/produtos (cardápio do site, do app e lista do administrador).
+
+2) sp_AtualizarStatusPedido (@IdPedido, @NovoStatus)
+   Valida a mudança de status:
+   - erro se o pedido não existe;
+   - erro se o pedido já está Entregue ou Cancelado;
+   - "Cancelado" é permitido em qualquer etapa em aberto;
+   - qualquer outro status só é aceito se for a próxima etapa (a ordem fica numa variável
+     do tipo tabela).
+   Os erros são lançados com RAISERROR; a API transforma em resposta 400 com a mensagem, que
+   aparece na tela do administrador.
+   Usada em: PUT /api/pedidos/{id}/status.
+
+3) sp_RelatorioVendas (@Inicio, @Fim)
+   Agrupa os pedidos não cancelados por dia (GROUP BY) e calcula quantidade de pedidos,
+   faturamento (SUM) e ticket médio (AVG).
+   Usada em: GET /api/dashboard/vendas (tabela "Vendas dos últimos 7 dias").
+
+4) sp_ResumoDashboard
+   Em uma única consulta, retorna: pedidos de hoje, faturamento de hoje, clientes ativos
+   (clientes + empresas), ticket médio geral e quantidade de ingredientes em alerta.
+   Usada em: GET /api/dashboard/resumo (cartões do dashboard).
+
+Por que usar procedures: a lógica fica perto dos dados, trafega menos informação entre API e
+banco, o SQL Server reaproveita o plano de execução e a regra crítica (fluxo de status) fica
+protegida mesmo que alguém acesse o banco por outro meio.
+
+6.5 Triggers
+------------
+1) trg_ItensPedido_BaixaEstoque (AFTER INSERT em ItensPedido)
+   Ao gravar os itens de um pedido, multiplica a quantidade pedida pela QuantidadeNecessaria
+   da ficha técnica (ProdutoIngredientes) e subtrai o resultado de
+   Ingredientes.QuantidadeAtual. Funciona com vários itens ao mesmo tempo (usa a tabela
+   "inserted" com GROUP BY).
+
+2) trg_Ingredientes_Alerta (AFTER UPDATE em Ingredientes)
+   Quando um ingrediente passa de "acima do mínimo" para "igual ou abaixo do mínimo"
+   (comparando as tabelas "inserted" e "deleted"), grava um registro em AlertasEstoque com a
+   mensagem "Estoque baixo: <nome>". O alerta é gerado só no momento em que o limite é
+   atingido, e não a cada venda.
+
+3) trg_Pedidos_Cancelamento (AFTER UPDATE em Pedidos)
+   Quando o status muda para Cancelado, devolve ao estoque os ingredientes dos itens daquele
+   pedido.
+
+Cadeia completa: pedido -> baixa de estoque -> (se atingir o mínimo) alerta -> dashboard.
+Cancelamento -> estoque devolvido.
+
+Detalhe técnico: por padrão, o Entity Framework Core usa a cláusula OUTPUT (sem INTO) para
+recuperar os ids gerados, e o SQL Server não aceita isso em tabelas com trigger. Por isso o
+AppDbContext declara HasTrigger(...) nas tabelas Ingredientes, Pedidos e ItensPedido, o que
+faz o EF usar outra forma de gravação.
+
+6.6 Integração do banco com a aplicação
+---------------------------------------
+- O Entity Framework Core mapeia classes para tabelas (ToTable), define os relacionamentos
+  (HasOne / WithMany / HasForeignKey) e aplica precisão 18,2 a todas as propriedades decimal.
+- O banco é criado pelos scripts SQL, não por migrations; o EF apenas usa a estrutura que já
+  existe.
+- As procedures são chamadas por Database.SqlQuery<T> (o resultado vira um DTO) e por
+  ExecuteSqlInterpolatedAsync (com parâmetros).
+- O mesmo banco atende, por meio da API, o site e o app.
+
+
+==========================================================================================
+7. AMBIENTE DE DESENVOLVIMENTO E EXECUÇÃO
+==========================================================================================
+
+O projeto usa Docker para não precisar instalar .NET, Flutter e SQL Server na máquina: cada
+parte roda em um contêiner.
+
+Serviços do docker-compose.yml:
+  db ........ SQL Server 2022, porta 1433. Volume "dbdata" mantém os dados; o healthcheck
+              espera o banco ficar pronto.
+  db-init ... executa os scripts db/*.sql em ordem e encerra.
+  api ....... compila e roda a API em http://localhost:8080 (só sobe depois dos scripts).
+  web ....... compila e roda o site em http://localhost:8081.
+  mobile .... compila o app Flutter para web e publica com Nginx em http://localhost:8082.
+
+Os Dockerfiles são multi-stage: um estágio compila com o SDK completo e a imagem final leva
+só o necessário para rodar, o que a deixa menor e mais segura.
+
+Comandos:
+  Subir tudo ........ docker compose up --build
+  Parar ............. docker compose down
+  Parar e apagar os dados do banco ... docker compose down -v
+
+Conexão com o banco (SSMS ou VS Code com a extensão SQL Server):
+  Servidor: localhost,1433   Usuário: sa   Senha: definida localmente no arquivo .env (não versionado)
+
+Usuários de teste:
+  Administrador ... admin@rappy.com     senha Admin@123
+  Cliente (B2C) ... cliente@rappy.com   senha Cliente@123
+  Empresa (B2B) ... empresa@rappy.com   senha Empresa@123
+
+Roteiro de demonstração (serve para a apresentação e para tirar os prints):
+  1. Abrir o app (localhost:8082), navegar pelo cardápio, adicionar itens, entrar com o
+     cliente e finalizar o pedido.
+  2. Abrir o site (localhost:8081) e entrar como admin: o pedido aparece no dashboard; avançar
+     o status.
+  3. Voltar ao app: a aba Pedidos mostra o novo status (em até 15 segundos).
+  4. No site, entrar como empresa, fazer um pedido e mostrar o desconto de 10%.
+  5. No admin, cadastrar ou editar um produto e conferir no cardápio do app (puxar para
+     atualizar).
+  6. Mostrar os indicadores e a tabela de vendas do dashboard; cancelar um pedido e explicar
+     que o estoque é devolvido pela trigger.
+
+
+==========================================================================================
+8. EVIDÊNCIAS (PRINTS) SUGERIDAS PARA O DOCUMENTO
+==========================================================================================
+
+Web:
+  - Home; Cardápio com filtro; Carrinho (um como cliente e outro como empresa, com desconto);
+    Login; Cadastro (abas Cliente e Empresa); Meus pedidos com status colorido; Dashboard
+    administrativo; Gerenciar produtos.
+  - O site em largura de celular (F12 > modo dispositivo), para mostrar a responsividade.
+Mobile:
+  - As 4 abas: Cardápio com os filtros, Carrinho com o selo de quantidade, Pedidos e Conta
+    (tela de login e tela logado); aviso de produto adicionado; mensagem de erro de login.
+API:
+  - Resposta JSON do login e de /api/produtos (navegador ou Postman).
+  - Uma rota de admin chamada sem token, retornando 401.
+Banco:
+  - Procedures e triggers no Object Explorer; tabela AlertasEstoque; DER atualizado.
+Ambiente:
+  - "docker compose ps" mostrando os contêineres rodando.
+
+
+==========================================================================================
+9. REFERÊNCIAS SUGERIDAS (ABNT) PARA O QUE FOI USADO
+==========================================================================================
+
+DOCKER INC. Docker documentation. 2026. Disponível em: https://docs.docker.com. Acesso em:
+27 out. 2026.
+
+FIELDING, Roy Thomas. Architectural styles and the design of network-based software
+architectures. 2000. Tese (Doutorado em Ciência da Informação e Computação) - University of
+California, Irvine, 2000.
+
+GOOGLE. Dart documentation. 2026. Disponível em: https://dart.dev/guides. Acesso em:
+27 out. 2026.
+
+GOOGLE. Flutter documentation. 2026. Disponível em: https://docs.flutter.dev. Acesso em:
+27 out. 2026.
+
+JONES, Michael B.; BRADLEY, John; SAKIMURA, Nat. RFC 7519: JSON Web Token (JWT). Internet
+Engineering Task Force, 2015. Disponível em: https://www.rfc-editor.org/rfc/rfc7519. Acesso
+em: 27 out. 2026.
+
+MARTIN, Robert C. Arquitetura limpa: o guia do artesão para estrutura e design de software.
+Rio de Janeiro: Alta Books, 2019.
+
+MICROSOFT. ASP.NET Core Blazor. 2026. Disponível em:
+https://learn.microsoft.com/aspnet/core/blazor. Acesso em: 27 out. 2026.
+
+MICROSOFT. SQL Server technical documentation. 2026. Disponível em:
+https://learn.microsoft.com/sql/sql-server. Acesso em: 27 out. 2026.
+
+PROVOS, Niels; MAZIÈRES, David. A future-adaptable password scheme. In: USENIX ANNUAL
+TECHNICAL CONFERENCE, 1999, Monterey. Proceedings [...]. Berkeley: USENIX Association, 1999.
+
+W3C. Web Content Accessibility Guidelines (WCAG) 2.1. 2018. Disponível em:
+https://www.w3.org/TR/WCAG21/. Acesso em: 27 out. 2026.
+
+(As referências de ASP.NET Core 8.0 e Entity Framework Core 8.0 já estão no documento.)

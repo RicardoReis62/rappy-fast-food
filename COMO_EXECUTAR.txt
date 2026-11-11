@@ -1,0 +1,123 @@
+RAPPY FAST FOOD - COMO EXECUTAR NO WINDOWS
+
+Tudo roda dentro do Docker. Não é preciso instalar .NET, Flutter nem SQL Server.
+
+REQUISITOS
+  - Windows 10 (22H2) ou Windows 11, 64 bits
+  - 8 GB de RAM e pelo menos 20 GB livres no disco
+  - Virtualização habilitada (Gerenciador de Tarefas > Desempenho > CPU > "Virtualização: Habilitado")
+  - Internet: a primeira execução baixa alguns GB de imagens
+
+
+1. INSTALAR O DOCKER (só na primeira vez)
+
+Abra o PowerShell como Administrador (menu Iniciar > digite "PowerShell" > botão direito >
+"Executar como administrador") e rode:
+
+    wsl --install --no-distribution
+    winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+    Restart-Computer
+
+Depois que o PC reiniciar:
+  - Abra o "Docker Desktop" pelo menu Iniciar
+  - Aceite os termos (não precisa criar conta, pode pular o login)
+  - Espere aparecer "Engine running" no canto inferior esquerdo
+
+Para conferir, abra um PowerShell normal e rode:
+
+    docker version
+
+
+2. EXTRAIR O PROJETO
+
+Salve o arquivo rappy-fast-food.zip na pasta Downloads e rode no PowerShell:
+
+    Expand-Archive -Path "$env:USERPROFILE\Downloads\rappy-fast-food.zip" -DestinationPath "C:\" -Force
+
+O projeto fica em C:\rappy-fast-food (o arquivo docker-compose.yml deve estar direto nessa pasta).
+Evite extrair na Área de Trabalho ou em Documentos (OneDrive) e em caminhos com espaços ou acentos.
+
+
+3. SUBIR O SISTEMA
+
+    cd C:\rappy-fast-food
+    docker compose up -d --build
+
+A primeira vez demora de 10 a 30 minutos. Nas próximas sobe em segundos.
+
+Para conferir:
+
+    docker compose ps -a
+
+Esperado: db "healthy", db-init "Exited (0)" e api, web e mobile "Up".
+
+
+4. ACESSAR
+
+    Site (Web) ........ http://localhost:8081
+    App (Mobile) ...... http://localhost:8082
+    API ............... http://localhost:8080/api/produtos
+
+Usuários de teste:
+
+    admin@rappy.com      Admin@123      (painel administrativo no site)
+    cliente@rappy.com    Cliente@123
+    empresa@rappy.com    Empresa@123    (10% de desconto no carrinho)
+
+
+5. ABRIR NO CELULAR (opcional)
+
+O celular e o PC precisam estar no mesmo Wi-Fi.
+
+  a) Descubra o IP do PC (linha "Endereço IPv4" do adaptador Wi-Fi, ex.: 192.168.0.15):
+
+         ipconfig
+
+  b) Libere as portas no firewall (PowerShell como Administrador, só na primeira vez):
+
+         New-NetFirewallRule -DisplayName "Rappy Fast Food" -Direction Inbound -Protocol TCP -LocalPort 8080,8081,8082 -Action Allow
+
+  c) No navegador do celular acesse http://IP_DO_PC:8082 (app) ou http://IP_DO_PC:8081 (site)
+
+
+6. LIGAR E DESLIGAR
+
+O Docker Desktop precisa estar aberto antes de qualquer comando.
+
+    cd C:\rappy-fast-food
+    docker compose stop         desliga e mantém os dados
+    docker compose up -d        liga de novo
+    docker compose down -v      apaga tudo, inclusive o banco (o próximo "up" recria do zero)
+
+Se alterar algum código, rode "docker compose up -d --build" para aplicar.
+
+
+PROBLEMAS COMUNS
+
+  - "docker" não é reconhecido como comando
+      Feche e abra o PowerShell de novo depois da instalação.
+
+  - "error during connect" ou "cannot find the file specified"
+      O Docker Desktop não está aberto. Abra e espere "Engine running".
+
+  - "port is already allocated" na porta 1433
+      Já existe um SQL Server instalado no PC. Pare o serviço (PowerShell como Administrador)
+      e rode o "docker compose up -d" de novo:
+
+          Get-Service *MSSQL* | Stop-Service -Force
+
+  - "port is already allocated" na porta 8080, 8081 ou 8082
+      Outro programa está usando a porta. Feche o programa e rode o "docker compose up -d" de novo.
+
+  - "You are not allowed to use Docker, you must be in the docker-users group"
+      Rode no PowerShell como Administrador, depois saia e entre de novo no Windows:
+
+          net localgroup docker-users "$env:USERNAME" /add
+
+  - Erro de virtualização ou de WSL ao abrir o Docker Desktop
+      Habilite a virtualização na BIOS (Intel VT-x ou AMD SVM) e reinicie.
+
+  - Site ou app abre mas não carrega os dados
+      A API pode ainda estar subindo. Veja o que está acontecendo com:
+
+          docker compose logs api

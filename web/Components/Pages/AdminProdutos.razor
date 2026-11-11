@@ -1,0 +1,157 @@
+@page "/admin/produtos"
+@inject ApiClient Api
+@inject Sessao Sessao
+
+<h1>Gerenciar produtos</h1>
+
+@if (!Sessao.EhAdmin)
+{
+    <p>Acesso restrito a administradores.</p>
+    <a class="btn" href="/login">Entrar</a>
+}
+else
+{
+    <div class="formulario">
+        <h3>@(editandoId == null ? "Novo produto" : $"Editando produto #{editandoId}")</h3>
+
+        <label for="nome">Nome</label>
+        <input id="nome" @bind="nome" />
+
+        <label for="descricao">Descricao</label>
+        <input id="descricao" @bind="descricao" />
+
+        <label for="preco">Preco</label>
+        <input id="preco" type="number" step="0.01" @bind="preco" />
+
+        <label for="categoria">Categoria</label>
+        <select id="categoria" @bind="idCategoria">
+            @foreach (var categoria in categorias)
+            {
+                <option value="@categoria.Id">@categoria.Nome</option>
+            }
+        </select>
+
+        <label for="calorias">Calorias</label>
+        <input id="calorias" type="number" @bind="calorias" />
+
+        <label><input type="checkbox" @bind="disponivel" /> Disponivel</label>
+
+        @if (erro != null)
+        {
+            <p class="erro" role="alert">@erro</p>
+        }
+
+        <div class="linha">
+            <button class="btn" @onclick="Salvar">Salvar</button>
+            @if (editandoId != null)
+            {
+                <button class="btn-link" @onclick="Limpar">Cancelar edicao</button>
+            }
+        </div>
+    </div>
+
+    <table class="tabela">
+        <thead><tr><th>Nome</th><th>Categoria</th><th>Preco</th><th>Acoes</th></tr></thead>
+        <tbody>
+            @foreach (var produto in produtos)
+            {
+                <tr>
+                    <td>@produto.Nome</td>
+                    <td>@produto.Categoria</td>
+                    <td>@produto.Preco.ToString("C")</td>
+                    <td>
+                        <button class="btn-pequeno" @onclick="() => Editar(produto)">Editar</button>
+                        <button class="btn-pequeno perigo" @onclick="() => Remover(produto.Id)">Remover</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Produto> produtos = new();
+    private List<Categoria> categorias = new();
+    private int? editandoId;
+    private string nome = "";
+    private string descricao = "";
+    private decimal preco;
+    private int idCategoria;
+    private int? calorias;
+    private bool disponivel = true;
+    private string? erro;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Sessao.EhAdmin)
+        {
+            categorias = await Api.Categorias();
+            idCategoria = categorias.FirstOrDefault()?.Id ?? 0;
+            await Carregar();
+        }
+    }
+
+    private async Task Carregar()
+    {
+        produtos = await Api.Produtos();
+    }
+
+    private async Task Editar(Produto produto)
+    {
+        var completo = await Api.Produto(produto.Id);
+        editandoId = completo.Id;
+        nome = completo.Nome;
+        descricao = completo.Descricao ?? "";
+        preco = completo.Preco;
+        idCategoria = completo.IdCategoria ?? idCategoria;
+        calorias = completo.Calorias;
+        disponivel = completo.Disponivel;
+    }
+
+    private void Limpar()
+    {
+        editandoId = null;
+        nome = "";
+        descricao = "";
+        preco = 0;
+        calorias = null;
+        disponivel = true;
+    }
+
+    private async Task Salvar()
+    {
+        erro = null;
+        try
+        {
+            await Api.SalvarProduto(editandoId, new
+            {
+                nome,
+                descricao,
+                preco,
+                idCategoria,
+                calorias,
+                disponivel
+            });
+            Limpar();
+            await Carregar();
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+    }
+
+    private async Task Remover(int id)
+    {
+        erro = null;
+        try
+        {
+            await Api.RemoverProduto(id);
+            await Carregar();
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+    }
+}

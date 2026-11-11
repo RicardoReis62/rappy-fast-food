@@ -1,0 +1,51 @@
+@page "/login"
+@inject ApiClient Api
+@inject Sessao Sessao
+@inject NavigationManager Nav
+
+<h1>Entrar</h1>
+
+<div class="formulario">
+    <label for="email">E-mail</label>
+    <input id="email" type="email" @bind="email" />
+
+    <label for="senha">Senha</label>
+    <div class="linha">
+        <input id="senha" type="@(mostrar ? "text" : "password")" @bind="senha" />
+        <button class="btn-link" type="button" @onclick="() => mostrar = !mostrar">@(mostrar ? "Ocultar" : "Mostrar")</button>
+    </div>
+
+    @if (erro != null)
+    {
+        <p class="erro" role="alert">@erro</p>
+    }
+
+    <button class="btn" @onclick="Entrar">Entrar</button>
+    <p>Ainda nao tem conta? <a href="/cadastro">Cadastre-se</a></p>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "retorno")]
+    public string? Retorno { get; set; }
+
+    private string email = "";
+    private string senha = "";
+    private bool mostrar;
+    private string? erro;
+
+    private async Task Entrar()
+    {
+        erro = null;
+        try
+        {
+            var usuario = await Api.Login(email, senha);
+            Sessao.Entrar(usuario);
+            var destino = usuario.TipoUsuario == "admin" ? "/admin" : (Retorno ?? "/cardapio");
+            Nav.NavigateTo(destino);
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+    }
+}

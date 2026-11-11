@@ -1,0 +1,63 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject Sessao Sessao
+@inject NavigationManager Nav
+
+<header class="topo">
+    <a class="logo" href="/">Rappy Fast Food</a>
+    <nav>
+        <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink href="/cardapio">Cardapio</NavLink>
+        <NavLink href="/carrinho">Carrinho (@Sessao.TotalItens)</NavLink>
+        @if (Sessao.Logado && !Sessao.EhAdmin)
+        {
+            <NavLink href="/pedidos">Meus Pedidos</NavLink>
+        }
+        @if (Sessao.EhAdmin)
+        {
+            <NavLink href="/admin" Match="NavLinkMatch.All">Dashboard</NavLink>
+            <NavLink href="/admin/produtos">Produtos</NavLink>
+        }
+    </nav>
+    <div class="conta">
+        @if (Sessao.Logado)
+        {
+            <span>Ola, @Sessao.Usuario!.Nome</span>
+            <button class="btn-link" @onclick="Sair">Sair</button>
+        }
+        else
+        {
+            <NavLink href="/login">Entrar</NavLink>
+            <NavLink href="/cadastro">Cadastrar</NavLink>
+        }
+    </div>
+</header>
+
+<main class="conteudo">
+    @Body
+</main>
+
+<footer class="rodape">Rappy Fast Food - Cozinha Inteligente</footer>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Sessao.Alterou += Atualizar;
+    }
+
+    private void Atualizar()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void Sair()
+    {
+        Sessao.Sair();
+        Nav.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        Sessao.Alterou -= Atualizar;
+    }
+}

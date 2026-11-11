@@ -1,0 +1,115 @@
+@page "/cadastro"
+@inject ApiClient Api
+@inject Sessao Sessao
+@inject NavigationManager Nav
+
+<h1>Cadastro</h1>
+
+<div class="filtros">
+    <button class="@(empresa ? "" : "ativo")" @onclick="() => empresa = false">Cliente</button>
+    <button class="@(empresa ? "ativo" : "")" @onclick="() => empresa = true">Empresa</button>
+</div>
+
+<div class="formulario">
+    <label for="nome">@(empresa ? "Nome do responsavel" : "Nome completo")</label>
+    <input id="nome" @bind="nome" />
+
+    <label for="email">E-mail</label>
+    <input id="email" type="email" @bind="email" />
+
+    <label for="senha">Senha (minimo 6 caracteres)</label>
+    <input id="senha" type="password" @bind="senha" />
+
+    <label for="telefone">Telefone</label>
+    <input id="telefone" @bind="telefone" />
+
+    @if (empresa)
+    {
+        <label for="razao">Razao social</label>
+        <input id="razao" @bind="razaoSocial" />
+
+        <label for="fantasia">Nome fantasia</label>
+        <input id="fantasia" @bind="nomeFantasia" />
+
+        <label for="cnpj">CNPJ</label>
+        <input id="cnpj" @bind="cnpj" />
+
+        <label for="func">Quantidade de funcionarios</label>
+        <input id="func" type="number" @bind="funcionarios" />
+
+        <label for="endEmpresa">Endereco de entrega</label>
+        <input id="endEmpresa" @bind="endereco" />
+    }
+    else
+    {
+        <label for="cpf">CPF</label>
+        <input id="cpf" @bind="cpf" />
+
+        <label for="endCliente">Endereco</label>
+        <input id="endCliente" @bind="endereco" />
+
+        <label for="cidade">Cidade</label>
+        <input id="cidade" @bind="cidade" />
+
+        <label for="estado">Estado (UF)</label>
+        <input id="estado" maxlength="2" @bind="estado" />
+    }
+
+    @if (erro != null)
+    {
+        <p class="erro" role="alert">@erro</p>
+    }
+
+    <button class="btn" @onclick="Cadastrar">Cadastrar</button>
+</div>
+
+@code {
+    private bool empresa;
+    private string nome = "";
+    private string email = "";
+    private string senha = "";
+    private string telefone = "";
+    private string endereco = "";
+    private string cpf = "";
+    private string cidade = "";
+    private string estado = "";
+    private string razaoSocial = "";
+    private string nomeFantasia = "";
+    private string cnpj = "";
+    private int funcionarios;
+    private string? erro;
+
+    private async Task Cadastrar()
+    {
+        erro = null;
+        try
+        {
+            AuthResposta usuario;
+            if (empresa)
+            {
+                usuario = await Api.CadastrarEmpresa(new
+                {
+                    nome,
+                    email,
+                    senha,
+                    telefone,
+                    razaoSocial,
+                    nomeFantasia,
+                    cnpj,
+                    quantidadeFuncionarios = funcionarios,
+                    enderecoEntrega = endereco
+                });
+            }
+            else
+            {
+                usuario = await Api.CadastrarCliente(new { nome, email, senha, telefone, cpf, endereco, cidade, estado });
+            }
+            Sessao.Entrar(usuario);
+            Nav.NavigateTo("/cardapio");
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+    }
+}

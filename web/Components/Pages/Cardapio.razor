@@ -1,0 +1,55 @@
+@page "/cardapio"
+@inject ApiClient Api
+@inject Sessao Sessao
+
+<h1>Cardapio</h1>
+
+<div class="filtros">
+    <button class="@(categoriaAtual == null ? "ativo" : "")" @onclick="() => Filtrar(null)">Todos</button>
+    @foreach (var categoria in categorias)
+    {
+        <button class="@(categoriaAtual == categoria.Id ? "ativo" : "")" @onclick="() => Filtrar(categoria.Id)">@categoria.Nome</button>
+    }
+</div>
+
+<div class="grade">
+    @foreach (var produto in produtos)
+    {
+        <div class="cartao">
+            <h3>@produto.Nome</h3>
+            <p>@produto.Descricao</p>
+            <small>@produto.Categoria @(produto.Calorias != null ? $"- {produto.Calorias} kcal" : "")</small>
+            <div class="linha">
+                <strong>@produto.Preco.ToString("C")</strong>
+                <button class="btn" @onclick="() => Sessao.Adicionar(produto)">Adicionar</button>
+            </div>
+        </div>
+    }
+</div>
+
+@if (produtos.Count == 0)
+{
+    <p>Nenhum produto encontrado.</p>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "categoria")]
+    public int? CategoriaQuery { get; set; }
+
+    private List<Categoria> categorias = new();
+    private List<Produto> produtos = new();
+    private int? categoriaAtual;
+
+    protected override async Task OnInitializedAsync()
+    {
+        categorias = await Api.Categorias();
+        categoriaAtual = CategoriaQuery;
+        produtos = await Api.Produtos(categoriaAtual);
+    }
+
+    private async Task Filtrar(int? id)
+    {
+        categoriaAtual = id;
+        produtos = await Api.Produtos(id);
+    }
+}

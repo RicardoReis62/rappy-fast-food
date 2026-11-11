@@ -1,0 +1,48 @@
+@page "/"
+@inject ApiClient Api
+
+<section class="hero">
+    <h1>Refeicoes saudaveis, rapidas e personalizadas</h1>
+    <p>Peca em poucos cliques ou contrate planos corporativos para a sua empresa.</p>
+    <a class="btn" href="/cardapio">Ver cardapio</a>
+</section>
+
+<h2>Categorias</h2>
+<div class="grade">
+    @foreach (var categoria in categorias)
+    {
+        <a class="cartao categoria" href="/cardapio?categoria=@categoria.Id">
+            <h3>@categoria.Nome</h3>
+            <p>@categoria.Descricao</p>
+        </a>
+    }
+</div>
+
+<h2>Destaques</h2>
+<div class="grade">
+    @foreach (var produto in destaques)
+    {
+        <div class="cartao">
+            <h3>@produto.Nome</h3>
+            <p>@produto.Descricao</p>
+            <strong>@produto.Preco.ToString("C")</strong>
+        </div>
+    }
+</div>
+
+<section class="chamada">
+    <h2>Para empresas</h2>
+    <p>Planos Start, Business e Enterprise com desconto de 10% em todos os pedidos.</p>
+    <a class="btn" href="/cadastro">Cadastrar minha empresa</a>
+</section>
+
+@code {
+    private List<Categoria> categorias = new();
+    private List<Produto> destaques = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        categorias = await Api.Categorias();
+        destaques = (await Api.Produtos()).Take(3).ToList();
+    }
+}

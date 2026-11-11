@@ -1,0 +1,113 @@
+@page "/carrinho"
+@inject ApiClient Api
+@inject Sessao Sessao
+@inject NavigationManager Nav
+
+<h1>Carrinho</h1>
+
+@if (Sessao.Carrinho.Count == 0)
+{
+    <p>Seu carrinho esta vazio.</p>
+    <a class="btn" href="/cardapio">Ver cardapio</a>
+}
+else
+{
+    <table class="tabela">
+        <thead>
+            <tr><th>Produto</th><th>Preco</th><th>Quantidade</th><th>Subtotal</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var item in Sessao.Carrinho)
+            {
+                <tr>
+                    <td>@item.Produto.Nome</td>
+                    <td>@item.Produto.Preco.ToString("C")</td>
+                    <td>
+                        <button class="btn-pequeno" @onclick="() => Sessao.Alterar(item.Produto.Id, -1)">-</button>
+                        @item.Quantidade
+                        <button class="btn-pequeno" @onclick="() => Sessao.Alterar(item.Produto.Id, 1)">+</button>
+                    </td>
+                    <td>@((item.Quantidade * item.Produto.Preco).ToString("C"))</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="resumo">
+        <p>Subtotal: @Sessao.Subtotal.ToString("C")</p>
+        <p>Taxa de entrega: @taxa.ToString("C")</p>
+        @if (desconto > 0)
+        {
+            <p>Desconto empresa (10%): -@desconto.ToString("C")</p>
+        }
+        <h3>Total: @((Sessao.Subtotal + taxa - desconto).ToString("C"))</h3>
+    </div>
+
+    <div class="formulario">
+        <label for="endereco">Endereco de entrega</label>
+        <input id="endereco" @bind="endereco" />
+
+        <label for="pagamento">Forma de pagamento</label>
+        <select id="pagamento" @bind="pagamento">
+            <option value="PIX">PIX</option>
+            <option value="CartaoCredito">Cartao de credito</option>
+            <option value="CartaoDebito">Cartao de debito</option>
+            <option value="Dinheiro">Dinheiro</option>
+        </select>
+
+        <label for="obs">Observacoes</label>
+        <input id="obs" @bind="observacoes" />
+
+        @if (erro != null)
+        {
+            <p class="erro" role="alert">@erro</p>
+        }
+
+        <button class="btn" disabled="@enviando" @onclick="Finalizar">Finalizar pedido</button>
+    </div>
+}
+
+@code {
+    private const decimal taxa = 5.00m;
+    private string endereco = "";
+    private string pagamento = "PIX";
+    private string observacoes = "";
+    private string? erro;
+    private bool enviando;
+
+    private decimal desconto => Sessao.Usuario?.TipoUsuario == "empresa" ? Math.Round(Sessao.Subtotal * 0.10m, 2) : 0;
+
+    private async Task Finalizar()
+    {
+        erro = null;
+        if (!Sessao.Logado)
+        {
+            Nav.NavigateTo("/login?retorno=/carrinho");
+            return;
+        }
+        if (Sessao.EhAdmin)
+        {
+            erro = "Administradores nao fazem pedidos.";
+            return;
+        }
+
+        enviando = true;
+        try
+        {
+            await Api.CriarPedido(new
+            {
+                enderecoEntrega = string.IsNullOrWhiteSpace(endereco) ? null : endereco,
+                formaPagamento = pagamento,
+                observacoes = string.IsNullOrWhiteSpace(observacoes) ? null : observacoes,
+                itens = Sessao.Carrinho.Select(i => new { idProduto = i.Produto.Id, quantidade = i.Quantidade })
+            });
+            Sessao.LimparCarrinho();
+            Nav.NavigateTo("/pedidos");
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+        enviando = false;
+    }
+}

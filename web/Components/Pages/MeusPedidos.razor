@@ -1,0 +1,54 @@
+@page "/pedidos"
+@inject ApiClient Api
+@inject Sessao Sessao
+@inject NavigationManager Nav
+
+<h1>Meus pedidos</h1>
+
+@if (!Sessao.Logado)
+{
+    <p>Faca login para ver seus pedidos.</p>
+    <a class="btn" href="/login?retorno=/pedidos">Entrar</a>
+}
+else if (pedidos.Count == 0)
+{
+    <p>Voce ainda nao fez pedidos.</p>
+}
+else
+{
+    @foreach (var pedido in pedidos)
+    {
+        <div class="cartao pedido">
+            <div class="linha">
+                <strong>Pedido #@pedido.Id</strong>
+                <span class="status @pedido.Status">@Rotulo(pedido.Status)</span>
+            </div>
+            <small>@pedido.DataHora.ToString("g") - @pedido.FormaPagamento</small>
+            <ul>
+                @foreach (var item in pedido.Itens)
+                {
+                    <li>@item.Quantidade x @item.Produto</li>
+                }
+            </ul>
+            <strong>Total: @pedido.ValorTotal.ToString("C")</strong>
+        </div>
+    }
+}
+
+@code {
+    private List<Pedido> pedidos = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Sessao.Logado && !Sessao.EhAdmin)
+        {
+            pedidos = await Api.MeusPedidos();
+        }
+    }
+
+    private static string Rotulo(string status) => status switch
+    {
+        "SaiuParaEntrega" => "Saiu para entrega",
+        _ => status
+    };
+}

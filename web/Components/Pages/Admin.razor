@@ -1,0 +1,122 @@
+@page "/admin"
+@inject ApiClient Api
+@inject Sessao Sessao
+
+<h1>Dashboard administrativo</h1>
+
+@if (!Sessao.EhAdmin)
+{
+    <p>Acesso restrito a administradores.</p>
+    <a class="btn" href="/login">Entrar</a>
+}
+else if (resumo != null)
+{
+    <div class="grade indicadores">
+        <div class="cartao"><small>Pedidos hoje</small><h2>@resumo.PedidosHoje</h2></div>
+        <div class="cartao"><small>Faturamento hoje</small><h2>@resumo.FaturamentoHoje.ToString("C")</h2></div>
+        <div class="cartao"><small>Clientes ativos</small><h2>@resumo.ClientesAtivos</h2></div>
+        <div class="cartao"><small>Ticket medio</small><h2>@resumo.TicketMedio.ToString("C")</h2></div>
+        <div class="cartao"><small>Ingredientes em alerta</small><h2>@resumo.IngredientesEmAlerta</h2></div>
+    </div>
+
+    <h2>Vendas dos ultimos 7 dias</h2>
+    <table class="tabela">
+        <thead><tr><th>Dia</th><th>Pedidos</th><th>Faturamento</th><th>Ticket medio</th></tr></thead>
+        <tbody>
+            @foreach (var venda in vendas)
+            {
+                <tr>
+                    <td>@venda.Dia.ToString("dd/MM/yyyy")</td>
+                    <td>@venda.Pedidos</td>
+                    <td>@venda.Faturamento.ToString("C")</td>
+                    <td>@venda.TicketMedio.ToString("C")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (alertas.Count > 0)
+    {
+        <h2>Alertas de estoque</h2>
+        <ul>
+            @foreach (var alerta in alertas)
+            {
+                <li>@alerta.DataHora.ToString("g") - @alerta.Mensagem</li>
+            }
+        </ul>
+    }
+
+    <h2>Pedidos</h2>
+    @if (erro != null)
+    {
+        <p class="erro" role="alert">@erro</p>
+    }
+    <table class="tabela">
+        <thead><tr><th>#</th><th>Cliente</th><th>Data</th><th>Total</th><th>Status</th><th>Acoes</th></tr></thead>
+        <tbody>
+            @foreach (var pedido in pedidos)
+            {
+                <tr>
+                    <td>@pedido.Id</td>
+                    <td>@pedido.Cliente (@pedido.TipoCliente)</td>
+                    <td>@pedido.DataHora.ToString("g")</td>
+                    <td>@pedido.ValorTotal.ToString("C")</td>
+                    <td><span class="status @pedido.Status">@pedido.Status</span></td>
+                    <td>
+                        @if (Proximo(pedido.Status) != null)
+                        {
+                            <button class="btn-pequeno" @onclick="() => Mudar(pedido.Id, Proximo(pedido.Status)!)">Avancar para @Proximo(pedido.Status)</button>
+                            <button class="btn-pequeno perigo" @onclick='() => Mudar(pedido.Id, "Cancelado")'>Cancelar</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private static readonly string[] Fluxo = { "Recebido", "Preparando", "Pronto", "SaiuParaEntrega", "Entregue" };
+
+    private Resumo? resumo;
+    private List<VendaDia> vendas = new();
+    private List<Alerta> alertas = new();
+    private List<Pedido> pedidos = new();
+    private string? erro;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Sessao.EhAdmin)
+        {
+            await Carregar();
+        }
+    }
+
+    private async Task Carregar()
+    {
+        resumo = await Api.Resumo();
+        vendas = await Api.Vendas();
+        alertas = await Api.Alertas();
+        pedidos = await Api.TodosPedidos();
+    }
+
+    private static string? Proximo(string status)
+    {
+        var posicao = Array.IndexOf(Fluxo, status);
+        return posicao >= 0 && posicao < Fluxo.Length - 1 ? Fluxo[posicao + 1] : null;
+    }
+
+    private async Task Mudar(int id, string status)
+    {
+        erro = null;
+        try
+        {
+            await Api.AtualizarStatus(id, status);
+            await Carregar();
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+        }
+    }
+}
